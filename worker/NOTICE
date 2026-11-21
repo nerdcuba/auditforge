@@ -1,0 +1,14 @@
+AuditForge worker — third-party notices
+=======================================
+
+Claude-BugHunter
+----------------
+The AuditForge worker ORCHESTRATES the Claude-BugHunter pack (it is not redistributed in this
+repository; it is installed into the image from its own repository, pinned to a reviewed commit).
+
+  Author:   Sachin Sharma / Claude-BugHunter
+  Repo:     https://github.com/elementalsouls/Claude-BugHunter
+  License:  code MIT (LICENSE), content CC BY 4.0 (LICENSE-CONTENT)
+
+Attribution (CC BY 4.0): Sachin Sharma / Claude-BugHunter is credited with a link back to the
+repository. See the pack's own NOTICE for its upstream skill attributions.

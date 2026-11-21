@@ -1,0 +1,49 @@
+# Gateway mínimo de AuditForge. El panel solo usa dos upstreams de Supabase:
+#   /auth/v1/* -> GoTrue (auth:9999)   y   /rest/v1/* -> PostgREST (rest:3000)
+# El entrypoint de nginx sustituye ${CORS_ORIGIN} (el origen del panel) con envsubst.
+server {
+    listen 8000;
+    server_name _;
+    client_max_body_size 16m;
+
+    # ---- Auth (GoTrue) ----
+    location /auth/v1/ {
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "${CORS_ORIGIN}" always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,PATCH,DELETE,OPTIONS" always;
+            add_header Access-Control-Allow-Headers "apikey,authorization,content-type,x-client-info,x-supabase-api-version,prefer,accept-profile,content-profile,range,x-requested-with" always;
+            add_header Access-Control-Max-Age 86400 always;
+            add_header Content-Type "text/plain; charset=utf-8" always;
+            add_header Content-Length 0 always;
+            return 204;
+        }
+        add_header Access-Control-Allow-Origin "${CORS_ORIGIN}" always;
+        add_header Access-Control-Expose-Headers "content-range,content-profile" always;
+        proxy_pass http://auth:9999/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ---- REST (PostgREST) ----
+    location /rest/v1/ {
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "${CORS_ORIGIN}" always;
+            add_header Access-Control-Allow-Methods "GET,POST,PUT,PATCH,DELETE,OPTIONS" always;
+            add_header Access-Control-Allow-Headers "apikey,authorization,content-type,x-client-info,x-supabase-api-version,prefer,accept-profile,content-profile,range,x-requested-with" always;
+            add_header Access-Control-Max-Age 86400 always;
+            add_header Content-Type "text/plain; charset=utf-8" always;
+            add_header Content-Length 0 always;
+            return 204;
+        }
+        add_header Access-Control-Allow-Origin "${CORS_ORIGIN}" always;
+        add_header Access-Control-Expose-Headers "content-range,content-profile" always;
+        proxy_pass http://rest:3000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = / { return 200 "AuditForge gateway\n"; add_header Content-Type text/plain; }
+    location / { return 404; }
+}

@@ -1,0 +1,28 @@
+# Secretos
+.env*
+!.env.example
+!.env.worker.example
+*.pem
+*.key
+
+# Dependencias y builds
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Salidas locales de escaneos (pueden contener datos sensibles)
+findings-output/
+reports-output/
+
+# Varios
+*.log
+.DS_Store
+supabase/.temp/
+.claude/settings.local.json
+
+# Secretos del despliegue
+deploy/.env
+deploy/.env.old

@@ -1,0 +1,14 @@
+AuditForge — self-host deployment: third-party notices
+======================================================
+
+Supabase (self-hosting)
+-----------------------
+The database init files `db/01-roles.sql` and `db/02-jwt.sql` come from the Supabase self-hosting
+project (github.com/supabase/supabase, docker/ folder), under the Apache-2.0 license.
+`db/03-auth-owner.sql` and the gateway config (`gateway/nginx.conf.template`) are AuditForge's own.
+
+The container images (supabase/postgres, supabase/gotrue, postgrest/postgrest, nginx,
+axllent/mailpit) are pulled from their official registries and keep their respective licenses.
+
+Supabase's upstream `db/generate-keys.sh` inspired the JWT key generation in `scripts/install.sh`
+(portions derived from Inder Singh's setup.sh, Apache-2.0).

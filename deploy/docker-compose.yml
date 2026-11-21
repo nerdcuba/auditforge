@@ -1,0 +1,176 @@
+# AuditForge — despliegue todo-en-uno (self-host ligero).
+# Stack: Postgres (Supabase) + Auth (GoTrue) + REST (PostgREST) + gateway (nginx) +
+# captador de correo (Mailpit) + web + worker. Sin Studio/Storage/Realtime/Analytics.
+# Lo levanta ./scripts/install.sh, que genera todos los secretos en deploy/.env.
+name: auditforge
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    volumes:
+      - ./db/03-auth-owner.sql:/docker-entrypoint-initdb.d/init-scripts/90-auth-owner.sql:Z
+      - ./db/01-roles.sql:/docker-entrypoint-initdb.d/init-scripts/91-roles.sql:Z
+      - ./db/02-jwt.sql:/docker-entrypoint-initdb.d/init-scripts/92-jwt.sql:Z
+      - db-data:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    command:
+      ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+
+  auth:
+    image: supabase/gotrue:v2.197.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${SITE_URL},${SITE_URL}/**
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-true}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: ${SUPABASE_PUBLIC_URL}/auth/v1
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-false}
+      GOTRUE_SMTP_HOST: mail
+      GOTRUE_SMTP_PORT: 1025
+      GOTRUE_SMTP_USER: "noreply"
+      GOTRUE_SMTP_PASS: "noreply"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@auditforge.local
+      GOTRUE_SMTP_SENDER_NAME: AuditForge
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rest:
+    image: postgrest/postgrest:v14.18
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+      PGRST_ADMIN_SERVER_PORT: 3001
+      # Recarga el cache de esquema cuando cambian las migraciones (canal LISTEN/NOTIFY).
+      PGRST_DB_CHANNEL_ENABLED: "true"
+    # La imagen de PostgREST es mínima (sin shell) y su flag --ready choca con el host por
+    # defecto, así que no usamos healthcheck: arranca rápido y el gateway/web reintentan.
+
+  mail:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "${MAIL_UI_PORT:-8025}:8025"
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      CORS_ORIGIN: ${SITE_URL}
+    volumes:
+      - ./gateway/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+
+  migrate:
+    image: supabase/postgres:17.6.1.136
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: ${POSTGRES_PORT:-5432}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD}
+    volumes:
+      - ../supabase/migrations:/migrations:ro
+      - ./migrate/run.sh:/run.sh:ro
+    entrypoint: ["bash", "/run.sh"]
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_started
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SITE_URL: ${SITE_URL}
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY}
+      SCOPE_TOKEN_PRIVATE_KEY: ${SCOPE_TOKEN_PRIVATE_KEY}
+      AUDITFORGE_SCAN_DISPATCH: ${AUDITFORGE_SCAN_DISPATCH:-queue}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+  worker:
+    build:
+      context: ../worker
+      dockerfile: Dockerfile
+      args:
+        PACK_COMMIT: ${PACK_COMMIT:-}
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      WORKER_DATABASE_URL: postgres://auditforge_worker:${WORKER_DB_PASSWORD}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}
+      SCOPE_TOKEN_PUBLIC_KEY: ${SCOPE_TOKEN_PUBLIC_KEY}
+      WORKER_ID: worker-1
+      ENGAGEMENT_CMD: ${ENGAGEMENT_CMD:-}
+
+volumes:
+  db-data:
